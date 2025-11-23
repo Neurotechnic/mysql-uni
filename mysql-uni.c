@@ -548,6 +548,53 @@ int DrawInteractiveTable(MYSQL_RES *res, const char *tableName, int page, int pa
     return 0;
 }
 
+// Eingabe für Fremdschlüssel-Felder über InteractiveTable
+// Rückgabe:
+//   0 -> kein Fremdschlüssel, Aufrufer soll normale Eingabe machen
+//   1 -> handled; buffer enthält entweder ausgewählten ID oder "" (unverändert/NULL)
+int inputForeignKeyViaTable(const char *tableName, const MYSQL_FIELD *field, const char *oldValue, char *buffer, size_t bufSize, int allowEmpty) {
+    (void)oldValue; // evtl. später für Default-Anzeige
+
+    char refTable[128];
+    char refColumn[128];
+
+    // Ist dieses Feld überhaupt ein Fremdschlüssel?
+    if (!getForeignKeyInfo(tableName, field->name, refTable, sizeof(refTable), refColumn, sizeof(refColumn)))
+    {
+        return 0; // kein FK -> Aufrufer macht normale Eingabe
+    }
+
+    while (1) {
+        printf(COLOR_GRAY "(Fremdschluessel -> %s.%s, Auswahl mit Pfeiltasten + ENTER,\n"
+               " ESC im Auswahlfenster = unveraendert/NULL)\n" COLOR_RESET, refTable, refColumn);
+
+        long selId = InteractiveTable(refTable, 1);
+
+        if (selId <= 0) {
+            // Benutzer hat ESC gedrückt oder nichts gewählt
+            if (allowEmpty) {
+                buffer[0] = '\0';   // bedeutet: unverändert (Edit) oder NULL (Insert)
+                return 1;
+            } else {
+                printf(COLOR_RED "Dieses Feld darf nicht leer sein. Bitte erneut waehlen.\n" COLOR_RESET);
+                continue;
+            }
+        }
+
+        // ID als Text speichern
+        snprintf(buffer, bufSize, "%ld", selId);
+
+        // zur Sicherheit noch einmal FK prüfen (sollte immer OK sein)
+        if (!validateForeignKey(tableName, field, buffer)) {
+            printf(COLOR_RED "Ungueltiger Fremdschluessel (kein passender Datensatz). Bitte erneut waehlen.\n"
+                   COLOR_RESET);
+            continue;
+        }
+
+        return 1;
+    }
+}
+
 // Datensätze bearbeiten / hinzufügen
 int EditRecord(const char *tableName, const char *idFieldName, const char *idValue) {
     if (!idFieldName[0] || !idValue[0]) {
@@ -817,61 +864,125 @@ void SetFilter(const char *tableName, char *filterBuffer, size_t bufferSize) {
     printf(COLOR_CYAN "Filter setzen - Tabelle %s\n" COLOR_RESET, tableName);
     printf(COLOR_GRAY "Operatoren: >, <, >=, <=, =, !=\n");
     printf("Bereiche:   BETWEEN 10 AND 20  (oder Datum: 2025-01-01 AND 2025-02-01)\n");
-    printf("Wildcards:  %% (z.B. 'Müller%%')\n");
-    printf("Leere Eingabe: Kein Filter.\n\n" COLOR_RESET);
+    printf("Wildcards:  %% (z.B. 'Mueller%%')\n");
+    printf("Leere Eingabe: Kein Filter.\n");
+    printf("Wert 'NULL': Suche nach Feldern mit NULL.\n\n" COLOR_RESET);
 
     char currentCondition[4096] = "";
     int conditionsCount = 0;
 
     for (int i = 0; i < num_fields; i++) {
-        printf(COLOR_WHITE "%s" COLOR_RESET ": ", fields[i].name);
-        
+
+        // Prüfen, ob dieses Feld ein Fremdschlüssel ist
+        char refTable[128];
+        char refColumn[128];
+        int isFK = getForeignKeyInfo(
+            tableName,
+            fields[i].name,
+            refTable, sizeof(refTable),
+            refColumn, sizeof(refColumn)
+        );
+
+        // Prompt
+        printf(COLOR_WHITE "%s" COLOR_RESET, fields[i].name);
+        if (isFK) {
+            printf(" (leer = kein Filter, ? = Auswahl, NULL = IS NULL)");
+        } else {
+            printf(" (leer = kein Filter, NULL = IS NULL)");
+        }
+        printf(": ");
+
         char input[512];
         readLine(input, sizeof(input));
 
-        if (input[0] == '\0') {
+        // Pointer auf ersten nicht-Leerzeichen-Char
+        char *p = input;
+        while (*p == ' ' || *p == '\t') p++;
+
+        // Trimmed-Kopie für Spezialfälle ("?", "NULL")
+        char trimmed[512];
+        strncpy(trimmed, p, sizeof(trimmed) - 1);
+        trimmed[sizeof(trimmed) - 1] = '\0';
+
+        char *end = trimmed + strlen(trimmed);
+        while (end > trimmed && (end[-1] == ' ' || end[-1] == '\t')) {
+            *--end = '\0';
+        }
+
+        // Leere Eingabe -> kein Filter für dieses Feld
+        if (trimmed[0] == '\0') {
             continue;
         }
 
+        // FK + "?" -> Auswahl über InteractiveTable
+        if (isFK && trimmed[0] == '?' && trimmed[1] == '\0') {
+
+            printf(COLOR_GRAY
+                   "Fremdschluessel -> %s.%s, Auswahl ueber Tabelle, ESC = kein Filter\n"
+                   COLOR_RESET,
+                   refTable, refColumn);
+
+            long selId = InteractiveTable(refTable, 1);
+            if (selId > 0) {
+                if (conditionsCount > 0) {
+                    strcat(currentCondition, " AND ");
+                }
+                char cond[256];
+                snprintf(cond, sizeof(cond), "%s = %ld",
+                         fields[i].name, selId);
+                strcat(currentCondition, cond);
+                conditionsCount++;
+            }
+            // ESC -> kein Filter
+            continue;
+        }
+
+        // "NULL" (case-insensitive) -> IS NULL
+        if ((trimmed[0] == 'N' || trimmed[0] == 'n') &&
+            (trimmed[1] == 'U' || trimmed[1] == 'u') &&
+            (trimmed[2] == 'L' || trimmed[2] == 'l') &&
+            (trimmed[3] == 'L' || trimmed[3] == 'l') &&
+            trimmed[4] == '\0')
+        {
+            if (conditionsCount > 0) {
+                strcat(currentCondition, " AND ");
+            }
+            strcat(currentCondition, fields[i].name);
+            strcat(currentCondition, " IS NULL");
+            conditionsCount++;
+            continue;
+        }
+
+        // Ab hier: normale Parserlogik (BETWEEN, Operatoren, LIKE ...)
         if (conditionsCount > 0) {
             strcat(currentCondition, " AND ");
         }
 
         strcat(currentCondition, fields[i].name);
 
-        // Parser
-        char *p = input;
-        
-        // Leerzeichen am Anfang überspringen
-        while (*p == ' ') p++;
+        // BETWEEN?
+        if (startsWithIgnoreCase(p, "BETWEEN")) {
 
-        // Fallunterscheidung
-        if (startsWithIgnoreCase(input, "BETWEEN")) {
-            // Wir versuchen, das " AND " zu finden, um Anführungszeichen automatisch zu setzen
-            // Wir überspringen das Wort "BETWEEN" (7 Zeichen)
-            char *startVal = p + 7; 
-            while (*startVal == ' ') startVal++; // Leerzeichen nach BETWEEN weg
+            // nach 'BETWEEN' weiter
+            char *startVal = p + 7;
+            while (*startVal == ' ') startVal++;
 
-            // Suche nach Trenner " AND " oder " and "
+            // " AND " oder " and " suchen
             char *sep = strstr(startVal, " AND ");
             if (!sep) sep = strstr(startVal, " and ");
 
             if (sep) {
-                // Format erkannt: BETWEEN wert1 AND wert2
-                
-                // Wert 1 extrahieren
-                size_t len1 = sep - startVal;
+                // Wert 1
+                size_t len1 = (size_t)(sep - startVal);
                 char val1[256];
                 if (len1 >= sizeof(val1)) len1 = sizeof(val1) - 1;
                 strncpy(val1, startVal, len1);
                 val1[len1] = '\0';
 
-                // Wert 2 extrahieren (nach " AND " = +5 Zeichen)
+                // Wert 2 (nach " AND ")
                 char *val2 = sep + 5;
-                while (*val2 == ' ') val2++; // Leerzeichen nach AND weg
+                while (*val2 == ' ') val2++;
 
-                // SQL zusammenbauen: BETWEEN 'val1' AND 'val2'
-                // Das Escapen und Quoten verhindert das Datums-Rechen-Problem
                 char esc1[512], esc2[512];
                 mysql_real_escape_string(conn, esc1, val1, strlen(val1));
                 mysql_real_escape_string(conn, esc2, val2, strlen(val2));
@@ -881,16 +992,14 @@ void SetFilter(const char *tableName, char *filterBuffer, size_t bufferSize) {
                 strcat(currentCondition, "' AND '");
                 strcat(currentCondition, esc2);
                 strcat(currentCondition, "'");
-
             } else {
-                // Falls der User "BETWEEN" schreibt, aber kein " AND " gefunden wurde,
-                // übernehmen wir es roh (User muss wissen was er tut)
+                // User hat "BETWEEN ..." geschrieben, aber kein "AND" → roh übernehmen
                 strcat(currentCondition, " ");
-                strcat(currentCondition, input); 
+                strcat(currentCondition, p);
             }
         }
         else {
-            // Normale Operatoren (>, <, =)
+            // Normale Operatoren (>, <, =, !=, ...)
             char op[5] = "";
             if (strncmp(p, ">=", 2) == 0) { strcpy(op, ">="); p += 2; }
             else if (strncmp(p, "<=", 2) == 0) { strcpy(op, "<="); p += 2; }
@@ -899,7 +1008,7 @@ void SetFilter(const char *tableName, char *filterBuffer, size_t bufferSize) {
             else if (strncmp(p, ">", 1) == 0)  { strcpy(op, ">");  p += 1; }
             else if (strncmp(p, "<", 1) == 0)  { strcpy(op, "<");  p += 1; }
             else if (strncmp(p, "=", 1) == 0)  { strcpy(op, "=");  p += 1; }
-            
+
             while (*p == ' ') p++;
 
             if (op[0] != '\0') {
@@ -913,14 +1022,15 @@ void SetFilter(const char *tableName, char *filterBuffer, size_t bufferSize) {
                 }
             }
 
-            // Wert IMMER escapen und in '...' setzen
+            // Wert immer escapen und in '...' setzen
             char esc[1024];
             mysql_real_escape_string(conn, esc, p, strlen(p));
-            
+
             strcat(currentCondition, " '");
             strcat(currentCondition, esc);
             strcat(currentCondition, "'");
         }
+
         conditionsCount++;
     }
 
@@ -931,12 +1041,13 @@ void SetFilter(const char *tableName, char *filterBuffer, size_t bufferSize) {
         printf("\n" COLOR_GREEN "Filter gesetzt: %s\n" COLOR_RESET, filterBuffer);
     } else {
         filterBuffer[0] = '\0';
-        printf("\n" COLOR_YELLOW "Filter gelöscht.\n" COLOR_RESET);
+        printf("\n" COLOR_YELLOW "Filter geloescht.\n" COLOR_RESET);
     }
-    
+
     printf("Weiter mit beliebiger Taste...");
     getch();
 }
+
 
 // Interaktive Tabellen-Schleife
 // selectionMode: 1 = Enter gibt ID zurück, 0 = normale Verwaltung
