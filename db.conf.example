@@ -1,0 +1,19 @@
+HOST=172.0.0.1
+USER=YOURUSER
+PASS=YOURPASS
+DB=DBNAME
+# Tabellen für das Menü (werden geprüft)
+TABLE=adressen
+TABLE=sportler
+TABLE=trainer
+TABLE=sportart
+TABLE=sportstaette
+TABLE=zahlung
+# Function (Title:Name)
+FUNC=Zahlung erfassen:Payment
+# Berichte (Titel:SQL)
+REPORT=Welcher Trainer ist für welche Sportart zuständig:SELECT t.trainer_name, s.bezeichnung AS sportart FROM trainer AS t JOIN trainer_sportart AS ts ON ts.trainer_id  = t.trainer_id JOIN sportart AS s ON s.sportart_id  = ts.sportart_id ORDER BY t.trainer_name, s.bezeichnung;
+REPORT=Welche Sportler werden von welchem Trainer an welchem Ort betreut:SELECT sp.sportler_name, tr.trainer_name, sa.bezeichnung AS sportart, stt.bezeichnung AS sportstaette, adr.Ort, adr.Strasse, adr.Nummer FROM sportler_trainer AS st JOIN sportler AS sp           ON sp.sportler_id      = st.sportler_id JOIN trainer  AS tr           ON tr.trainer_id       = st.trainer_id JOIN trainer_sportart AS ts   ON ts.trainer_id       = tr.trainer_id JOIN sportler_sportart AS ss  ON ss.sportler_id      = sp.sportler_id AND ss.sportart_id     = ts.sportart_id JOIN sportart AS sa ON sa.sportart_id = ss.sportart_id JOIN sportstaette AS stt ON stt.sportstaette_id = sa.sportstaette_id JOIN adressen AS adr ON adr.adresse_id = stt.adresse_id ORDER BY tr.trainer_name, sp.sportler_name, sa.bezeichnung;
+REPORT=Welche Sportler sind mit der Zahlung im Rückstand:SELECT sp.sportler_name, DATE_FORMAT(z.fuer_monat, '%Y-%m') AS monat, z.beitrag FROM zahlung AS z JOIN sportler AS sp ON sp.sportler_id = z.sportler_id WHERE z.zahlungsdatum IS NULL ORDER BY z.fuer_monat, sp.sportler_name;
+REPORT=Zahlungsstatus für einen bestimmten Monat:SELECT sp.sportler_name, DATE_FORMAT(z.fuer_monat, '%Y-%m') AS monat, z.beitrag, CASE WHEN z.zahlungsdatum IS NOT NULL THEN 'bezahlt' ELSE 'nicht bezahlt' END AS status FROM zahlung AS z JOIN sportler AS sp ON sp.sportler_id = z.sportler_id WHERE z.fuer_monat = STR_TO_DATE(DATE_FORMAT('2025-10-01', '%Y-%m-01'), '%Y-%m-%d') ORDER BY sp.sportler_name;
+REPORT=Vorauszahlungen anzeigen:SELECT sp.sportler_name, DATE_FORMAT(z.fuer_monat, '%Y-%m') AS monat, z.beitrag FROM zahlung AS z JOIN sportler AS sp ON sp.sportler_id = z.sportler_id WHERE STR_TO_DATE(DATE_FORMAT(z.fuer_monat, '%Y-%m-01'), '%Y-%m-%d') > STR_TO_DATE(DATE_FORMAT(CURDATE(), '%Y-%m-01'), '%Y-%m-%d') ORDER BY z.fuer_monat, sp.sportler_name;

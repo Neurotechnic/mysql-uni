@@ -1,0 +1,11 @@
+.vscode/
+*.conf
+*.o
+*.obj
+*.exe
+*.dll
+*.so
+*.dylib
+a.out
+.DS_Store
+Thumbs.db
