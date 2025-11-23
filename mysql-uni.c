@@ -52,6 +52,7 @@ ConfigNode *g_configList = NULL;
 long InteractiveTable(const char *tableName, int selectionMode);
 int DrawReport(const char *title, const char *sqlQuery);
 void AddPaymentProcess(void);
+void Verkaufen(void);
 
 //Callback wrapper funktionen
 
@@ -83,6 +84,11 @@ void cb_Report(const char *context) {
 void cb_Payment(const char *dummy) {
     (void)dummy;
     AddPaymentProcess();
+}
+
+void cb_Verkaufen(const char *dummy) {
+    (void)dummy;
+    Verkaufen();
 }
 
 void cb_Exit(const char *dummy) {
@@ -876,12 +882,7 @@ void SetFilter(const char *tableName, char *filterBuffer, size_t bufferSize) {
         // Prüfen, ob dieses Feld ein Fremdschlüssel ist
         char refTable[128];
         char refColumn[128];
-        int isFK = getForeignKeyInfo(
-            tableName,
-            fields[i].name,
-            refTable, sizeof(refTable),
-            refColumn, sizeof(refColumn)
-        );
+        int isFK = getForeignKeyInfo(tableName, fields[i].name, refTable, sizeof(refTable), refColumn, sizeof(refColumn));
 
         // Prompt
         printf(COLOR_WHITE "%s" COLOR_RESET, fields[i].name);
@@ -917,10 +918,7 @@ void SetFilter(const char *tableName, char *filterBuffer, size_t bufferSize) {
         // FK + "?" -> Auswahl über InteractiveTable
         if (isFK && trimmed[0] == '?' && trimmed[1] == '\0') {
 
-            printf(COLOR_GRAY
-                   "Fremdschluessel -> %s.%s, Auswahl ueber Tabelle, ESC = kein Filter\n"
-                   COLOR_RESET,
-                   refTable, refColumn);
+            printf(COLOR_GRAY "Fremdschluessel -> %s.%s, Auswahl ueber Tabelle, ESC = kein Filter\n" COLOR_RESET, refTable, refColumn);
 
             long selId = InteractiveTable(refTable, 1);
             if (selId > 0) {
@@ -928,8 +926,7 @@ void SetFilter(const char *tableName, char *filterBuffer, size_t bufferSize) {
                     strcat(currentCondition, " AND ");
                 }
                 char cond[256];
-                snprintf(cond, sizeof(cond), "%s = %ld",
-                         fields[i].name, selId);
+                snprintf(cond, sizeof(cond), "%s = %ld", fields[i].name, selId);
                 strcat(currentCondition, cond);
                 conditionsCount++;
             }
@@ -1506,6 +1503,247 @@ void AddPaymentProcess(void) {
     getch();
 }
 
+// Neuer Verkaufsprozess für Schema mit kunden / mitarbeiter / artikels / bestellungen / bestellpositionen
+void Verkaufen(void) {
+    typedef struct {
+        long  artikelId;
+        int   menge;
+        double preis;
+    } OrderItem;
+
+    OrderItem items[100];
+    int itemCount = 0;
+
+    system("cls");
+    printf(COLOR_CYAN "Neuen Verkauf erfassen\n" COLOR_RESET);
+    printf(COLOR_GRAY "(ESC im Auswahlfenster bricht den Vorgang ab)\n\n" COLOR_RESET);
+
+    // 1) Kunde auswählen
+    printf("Bitte Kunden waehlen...\n");
+    long kundeId = InteractiveTable("kunden", 1);
+    if (kundeId <= 0) {
+        printf(COLOR_YELLOW "Kein Kunde gewaehlt. Vorgang abgebrochen.\n" COLOR_RESET);
+        getch();
+        return;
+    }
+
+    // 2) Mitarbeiter auswählen
+    printf("\nBitte Mitarbeiter waehlen...\n");
+    long mitarbeiterId = InteractiveTable("mitarbeiter", 1);
+    if (mitarbeiterId <= 0) {
+        printf(COLOR_YELLOW "Kein Mitarbeiter gewaehlt. Vorgang abgebrochen.\n" COLOR_RESET);
+        getch();
+        return;
+    }
+
+    // 3) Artikel in einer Schleife hinzufügen
+    while (1) {
+        printf("\nArtikel fuer die Bestellung waehlen...\n");
+        long artikelId = InteractiveTable("artikels", 1);
+
+        if (artikelId <= 0) {
+            if (itemCount == 0) {
+                printf(COLOR_YELLOW "Keine Artikel ausgewaehlt. Vorgang abgebrochen.\n" COLOR_RESET);
+                getch();
+                return;
+            } else {
+                // keine weitere Position
+                break;
+            }
+        }
+
+        // Lagerbestand und Preis laden
+        char q[512];
+        snprintf(q, sizeof(q),
+                 "SELECT preis, menge FROM artikels WHERE artikel_id=%ld;", artikelId);
+
+        if (mysql_query(conn, q) != 0) {
+            printf(COLOR_RED "Fehler beim Lesen des Artikels: %s\n" COLOR_RESET, mysql_error(conn));
+            getch();
+            return;
+        }
+
+        MYSQL_RES *res = mysql_store_result(conn);
+        if (!res) {
+            printf(COLOR_RED "Fehler beim Lesen des Ergebnisses: %s\n" COLOR_RESET, mysql_error(conn));
+            getch();
+            return;
+        }
+
+        MYSQL_ROW row = mysql_fetch_row(res);
+        if (!row) {
+            mysql_free_result(res);
+            printf(COLOR_RED "Artikel nicht gefunden.\n" COLOR_RESET);
+            getch();
+            return;
+        }
+
+        double preis = row[0] ? atof(row[0]) : 0.0;
+        long lagerMenge = row[1] ? atol(row[1]) : 0;
+
+        mysql_free_result(res);
+
+        if (lagerMenge <= 0) {
+            printf(COLOR_RED "Dieser Artikel ist nicht auf Lager (Menge = 0).\n" COLOR_RESET);
+            printf("Bitte anderen Artikel waehlen.\n");
+            continue;
+        }
+
+        printf("Artikel-ID: %ld, Preis: %.2f, Lager: %ld\n", artikelId, preis, lagerMenge);
+
+        // Menge abfragen und direkt gegen Lager pruefen
+        int bestellMenge = 0;
+        while (1) {
+            char buf[64];
+            printf("Menge (1..%ld) [1]: ", lagerMenge);
+
+            if (!eingabeText(buf, sizeof(buf), "1")) {
+                // ESC -> aktuelle Artikelwahl abbrechen
+                printf("\nArtikel wird nicht hinzugefuegt.\n");
+                bestellMenge = 0;
+                break;
+            }
+            printf("\n");
+
+            long m = atol(buf);
+            if (m <= 0) {
+                printf(COLOR_RED "Menge muss groesser als 0 sein.\n" COLOR_RESET);
+                continue;
+            }
+            if (m > lagerMenge) {
+                printf(COLOR_RED "Nicht genug auf Lager. Maximal verfuegbar: %ld\n" COLOR_RESET, lagerMenge);
+                continue;
+            }
+            bestellMenge = (int)m;
+            break;
+        }
+
+        if (bestellMenge <= 0) {
+            // Artikel wird nicht aufgenommen, aber Schleife kann weiterlaufen
+            continue;
+        }
+
+        if (itemCount >= 100) {
+            printf(COLOR_YELLOW "Maximale Anzahl von 100 Positionen erreicht.\n" COLOR_RESET);
+            break;
+        }
+
+        items[itemCount].artikelId = artikelId;
+        items[itemCount].menge     = bestellMenge;
+        items[itemCount].preis     = preis;
+        itemCount++;
+
+        printf(COLOR_GREEN "Artikel hinzugefuegt: ID %ld, Menge %d, Einzelpreis %.2f\n" COLOR_RESET,
+               artikelId, bestellMenge, preis);
+
+        // Noch eine Position?
+        printf("Noch einen Artikel hinzufuegen? (j/n): ");
+        int ch;
+        do {
+            ch = getch();
+        } while (ch != 'j' && ch != 'J' && ch != 'n' && ch != 'N');
+        printf("%c\n", ch);
+        if (ch != 'j' && ch != 'J') break;
+    }
+
+    if (itemCount == 0) {
+        printf(COLOR_YELLOW "Keine Artikel in der Bestellung. Vorgang abgebrochen.\n" COLOR_RESET);
+        getch();
+        return;
+    }
+
+    // 4) SQL-Befehle bauen und ausführen
+    char sqlLog[8192];
+    sqlLog[0] = '\0';
+
+    // Datum = heute
+    time_t t = time(NULL);
+    struct tm *tmv = localtime(&t);
+    char today[11];
+    strftime(today, sizeof(today), "%Y-%m-%d", tmv);
+
+    // Transaktion starten (optional, aber schoen fuer Konsistenz)
+    if (mysql_query(conn, "START TRANSACTION;") != 0) {
+        printf(COLOR_RED "Fehler bei START TRANSACTION: %s\n" COLOR_RESET, mysql_error(conn));
+        getch();
+        return;
+    }
+    strncat(sqlLog, "START TRANSACTION;", sizeof(sqlLog) - strlen(sqlLog) - 1);
+    strncat(sqlLog, "\n", sizeof(sqlLog) - strlen(sqlLog) - 1);
+
+    // Bestellung anlegen
+    char q[1024];
+    snprintf(q, sizeof(q),
+             "INSERT INTO bestellungen (kunde_id, datum, status, mitarbeiter_id) "
+             "VALUES (%ld, '%s', 'offen', %ld);",
+             kundeId, today, mitarbeiterId);
+
+    if (mysql_query(conn, q) != 0) {
+        printf(COLOR_RED "Fehler beim Anlegen der Bestellung: %s\n" COLOR_RESET, mysql_error(conn));
+        mysql_query(conn, "ROLLBACK;");
+        getch();
+        return;
+    }
+    strncat(sqlLog, q, sizeof(sqlLog) - strlen(sqlLog) - 1);
+    strncat(sqlLog, "\n", sizeof(sqlLog) - strlen(sqlLog) - 1);
+
+    long bestId = (long)mysql_insert_id(conn);
+
+    // Positionen + Lagerbestand aktualisieren
+    for (int i = 0; i < itemCount; i++) {
+        // Position
+        snprintf(q, sizeof(q),
+                 "INSERT INTO bestellpositionen (best_id, artikel_id, menge, price) "
+                 "VALUES (%ld, %ld, %d, %.2f);",
+                 bestId,
+                 items[i].artikelId,
+                 items[i].menge,
+                 items[i].preis);
+
+        if (mysql_query(conn, q) != 0) {
+            printf(COLOR_RED "Fehler beim Anlegen der Position: %s\n" COLOR_RESET, mysql_error(conn));
+            mysql_query(conn, "ROLLBACK;");
+            getch();
+            return;
+        }
+        strncat(sqlLog, q, sizeof(sqlLog) - strlen(sqlLog) - 1);
+        strncat(sqlLog, "\n", sizeof(sqlLog) - strlen(sqlLog) - 1);
+
+        // Lagerbestand verringern
+        snprintf(q, sizeof(q),
+                 "UPDATE artikels SET menge = menge - %d WHERE artikel_id = %ld;",
+                 items[i].menge,
+                 items[i].artikelId);
+
+        if (mysql_query(conn, q) != 0) {
+            printf(COLOR_RED "Fehler beim Aktualisieren des Lagerbestands: %s\n" COLOR_RESET, mysql_error(conn));
+            mysql_query(conn, "ROLLBACK;");
+            getch();
+            return;
+        }
+        strncat(sqlLog, q, sizeof(sqlLog) - strlen(sqlLog) - 1);
+        strncat(sqlLog, "\n", sizeof(sqlLog) - strlen(sqlLog) - 1);
+    }
+
+    // Commit
+    if (mysql_query(conn, "COMMIT;") != 0) {
+        printf(COLOR_RED "Fehler bei COMMIT: %s\n" COLOR_RESET, mysql_error(conn));
+        mysql_query(conn, "ROLLBACK;");
+        getch();
+        return;
+    }
+    strncat(sqlLog, "COMMIT;", sizeof(sqlLog) - strlen(sqlLog) - 1);
+    strncat(sqlLog, "\n", sizeof(sqlLog) - strlen(sqlLog) - 1);
+
+    // 5) Ergebnis anzeigen
+    system("cls");
+    printf(COLOR_GREEN "Bestellung wurde erfolgreich angelegt. Bestell-ID: %ld\n\n" COLOR_RESET, bestId);
+    printf(COLOR_CYANH "Ausgefuehrte SQL-Befehle:\n%s" COLOR_RESET, sqlLog);
+    printf("\n\nWeiter mit beliebiger Taste...");
+    getch();
+}
+
+
 int checkTableExists(const char *tableName) {
     char q[512];
     char esc[256];
@@ -1622,6 +1860,8 @@ int main(int argc, char *argv[])
             // Mapping von Text-Code auf echte C-Funktion
             if (strcmp(curr->value, "Payment") == 0) {
                 AddMenuItem(curr->key, cb_Payment, NULL);
+            } else if (strcmp(curr->value, "Verkaufen") == 0) {
+                AddMenuItem(curr->key, cb_Verkaufen, NULL);
             }
         }
         curr = curr->next;
