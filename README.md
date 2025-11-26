@@ -16,24 +16,20 @@ und die Windows Console API für die Darstellung (Farben, Cursor-Positionierung)
 Der Einstiegspunkt ist die Funktion main in mysql-uni.c. Das Programm akzeptiert ein
 Kommandozeilenargument -conf:DATEINAME (Standard ist db.conf).
 
-Konfiguration parsen (ParseConfigFile)
+**Konfiguration parsen (*ParseConfigFile*)**
 
 Die Config-Datei wird Zeile für Zeile eingelesen. Es kommt ein simpler "Schlüssel=Wert"-Parser zum
 Einsatz. Die eingelesenen Daten landen in einer einfach verketteten Liste g_configList (Struct
 ConfigNode).
 
-Unterstützte Befehle:
+**Unterstützte Befehle:**
 
-```
-HOST, USER, PASS, DB: Zugangsdaten für MySQL.
-TABLE: Name einer Tabelle, für die automatisch ein CRUD-Interface (Erstellen, Lesen,
-Aktualisieren, Löschen) generiert wird.
-REPORT: Format Titel:SQL_Query. Erstellt einen Menüpunkt für einen schreibgeschützten
-Bericht.
-FUNC: Format Titel:Interner_Name. Verknüpft einen Menüpunkt mit spezifischer Business-
-Logik im Code.
-```
-Aufbau des Hauptmenüs
+- HOST, USER, PASS, DB: Zugangsdaten für MySQL.
+- TABLE: Name einer Tabelle, für die automatisch ein CRUD-Interface (Erstellen, Lesen, Aktualisieren, Löschen) generiert wird.
+- REPORT: Format Titel:SQL_Query. Erstellt einen Menüpunkt für einen schreibgeschützten Bericht.
+- FUNC: Format Titel:Interner_Name. Verknüpft einen Menüpunkt mit spezifischer Business-Logik im Code.
+
+**Aufbau des Hauptmenüs**
 
 Sobald die DB-Verbindung steht, iteriert das Programm über g_configList und füllt das Array
 g_menuItems:
@@ -57,43 +53,32 @@ long InteractiveTable(const char *tableName, int selectionMode);
 ```
 Funktionsweise
 
-1. Lazy Loading & Paging:
-    Es werden nicht alle Daten sofort in den Speicher geladen, aber der MYSQL_RES Zeiger bleibt
-    offen.
-    Die Darstellung erfolgt seitenweise (pageSize = 20). Es wird immer nur das aktuelle
-    "Fenster" gerendert.
-    Bei der Navigation (Pfeiltasten) ändert sich lediglich der Index (selInPage) oder die Seite
-    (page).
-2. Betriebsmodi (selectionMode):
-    0 (Normal): Standard-Modus zum Ansehen, Bearbeiten (w), Hinzufügen (a) und Filtern
-    (f). Rückgabewert beim Beenden ist -1.
-       1 (Auswahl): Wird genutzt, um einen Fremdschlüssel auszuwählen. Drückt der User ENTER,
-    wird die ID des markierten Datensatzes zurückgegeben.
-3. Behandlung von Fremdschlüsseln (Foreign Keys):
-    Beim Bearbeiten oder Erstellen eines Datensatzes (inputValueForField) prüft das
-    Programm via INFORMATION_SCHEMA, ob ein Feld ein Fremdschlüssel ist.
+1. **Lazy Loading & Paging:**
+    Es werden nicht alle Daten sofort in den Speicher geladen, aber der MYSQL_RES Zeiger bleibt offen.
+    Die Darstellung erfolgt seitenweise (pageSize = 20). Es wird immer nur das aktuelle "Fenster" gerendert.
+    Bei der Navigation (Pfeiltasten) ändert sich lediglich der Index (selInPage) oder die Seite (page).
+2. **Betriebsmodi (selectionMode):**
+    - Normal (0). Standard-Modus zum Ansehen, Bearbeiten (w), Hinzufügen (a) und Filtern (f). Rückgabewert beim Beenden ist -1.
+    - Auswahl (1): Wird genutzt, um einen Fremdschlüssel auszuwählen. Drückt der User ENTER, wird die ID des markierten Datensatzes zurückgegeben.
+3. **Behandlung von Fremdschlüsseln (Foreign Keys):**
+    Beim Bearbeiten oder Erstellen eines Datensatzes (inputValueForField) prüft das Programm via INFORMATION_SCHEMA, ob ein Feld ein Fremdschlüssel ist.
     Ist das der Fall, wird InteractiveTable(RefTable, 1) rekursiv aufgerufen.
     Der User sieht dann die verknüpfte Tabelle, wählt einen Eintrag aus, und die ID wird
     automatisch in das Eingabefeld übernommen.
-4. Filterung (SetFilter):
+4. **Filterung (*SetFilter*):**
     Der User kann Bedingungen eingeben (z.B. LIKE, =, >, BETWEEN).
     Daraus wird eine WHERE-Klausel generiert, das MYSQL_RES neu geladen und die Paginierung
     zurückgesetzt.
 
 ## 4. Berichtswesen: DrawReport
 
-Die Funktion DrawReport dient der Anzeige von Ergebnissen beliebiger SQL-Abfragen, die in der
-Config definiert wurden.
+Die Funktion *DrawReport* dient der Anzeige von Ergebnissen beliebiger SQL-Abfragen, die in der Config definiert wurden.
 
 Besonderheiten:
 
-```
-Dynamisches Layout: Die Spaltenbreiten werden automatisch berechnet. Basis sind die
-Metadaten (mysql_fetch_fields) und die tatsächliche Länge der Daten (utf8_strlen), damit
-die Tabelle auch bei Umlauten sauber ausgerichtet bleibt.
-Read-Only: Im Gegensatz zu InteractiveTable gibt es hier keinen Auswahl-Cursor und keine
-Bearbeitungsfunktionen.
-```
+**Dynamisches Layout:** Die Spaltenbreiten werden automatisch berechnet. Basis sind die Metadaten (*mysql_fetch_fields*) und die tatsächliche Länge der Daten (*utf8_strlen*), damit die Tabelle auch bei Umlauten sauber ausgerichtet bleibt.
+**Read-Only**: Im Gegensatz zu *InteractiveTable* gibt es hier keinen Auswahl-Cursor und keine Bearbeitungsfunktionen.
+
 ## 5. Eigene Funktionen (FUNC) und Plugins
 
 
@@ -115,7 +100,7 @@ else if (strcmp(curr->value, "Verkaufen") == 0) { ... }
 Das ist unschön, da für jede neue Business-Logik (z.B. Verkaufen oder RechnungDrucken) der Core
 (mysql-uni.exe) neu kompiliert werden muss.
 
-Geplante Architektur (DLL Plugins)
+**Geplante Architektur (DLL Plugins)**
 
 Es ist ein Refactoring hin zu einem echten Plugin-System geplant:
 
@@ -128,10 +113,6 @@ Es ist ein Refactoring hin zu einem echten Plugin-System geplant:
 
 ## 6. Hilfsmodule
 
-```
-myfunc.h: Enthält Low-Level-Funktionen für die Konsole.
-eingabeText / eingabeJahrMonat: Sichere Eingabefunktionen mit ESC-Support (Abbruch).
-utf8_strlen: Korrekte Berechnung der String-Länge für die Tabellenausrichtung (essenziell
-für korrekte Darstellung von Umlauten).
-```
-
+*myfunc.h*: Enthält Low-Level-Funktionen für die Konsole.
+	*eingabeText* / *eingabeJahrMonat*: Sichere Eingabefunktionen mit ESC-Support (Abbruch).
+	*utf8_strlen*: Korrekte Berechnung der String-Länge für die Tabellenausrichtung (essenziell für korrekte Darstellung von Umlauten).
