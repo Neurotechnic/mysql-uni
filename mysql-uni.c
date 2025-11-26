@@ -53,6 +53,7 @@ long InteractiveTable(const char *tableName, int selectionMode);
 int DrawReport(const char *title, const char *sqlQuery);
 void AddPaymentProcess(void);
 void Verkaufen(void);
+void RechnungDrucken(void);
 
 //Callback wrapper funktionen
 
@@ -89,6 +90,11 @@ void cb_Payment(const char *dummy) {
 void cb_Verkaufen(const char *dummy) {
     (void)dummy;
     Verkaufen();
+}
+
+void cb_RechnungDrucken(const char *dummy) {
+    (void)dummy;
+    RechnungDrucken();
 }
 
 void cb_Exit(const char *dummy) {
@@ -1673,10 +1679,8 @@ void Verkaufen(void) {
 
     // Bestellung anlegen
     char q[1024];
-    snprintf(q, sizeof(q),
-             "INSERT INTO bestellungen (kunde_id, datum, status, mitarbeiter_id) "
-             "VALUES (%ld, '%s', 'offen', %ld);",
-             kundeId, today, mitarbeiterId);
+    snprintf(q, sizeof(q), "INSERT INTO bestellungen (kunde_id, datum, status, mitarbeiter_id) "
+             "VALUES (%ld, '%s', 'offen', %ld);", kundeId, today, mitarbeiterId);
 
     if (mysql_query(conn, q) != 0) {
         printf(COLOR_RED "Fehler beim Anlegen der Bestellung: %s\n" COLOR_RESET, mysql_error(conn));
@@ -1694,11 +1698,7 @@ void Verkaufen(void) {
         // Position
         snprintf(q, sizeof(q),
                  "INSERT INTO bestellpositionen (best_id, artikel_id, menge, price) "
-                 "VALUES (%ld, %ld, %d, %.2f);",
-                 bestId,
-                 items[i].artikelId,
-                 items[i].menge,
-                 items[i].preis);
+                 "VALUES (%ld, %ld, %d, %.2f);", bestId, items[i].artikelId, items[i].menge, items[i].preis);
 
         if (mysql_query(conn, q) != 0) {
             printf(COLOR_RED "Fehler beim Anlegen der Position: %s\n" COLOR_RESET, mysql_error(conn));
@@ -1739,6 +1739,112 @@ void Verkaufen(void) {
     system("cls");
     printf(COLOR_GREEN "Bestellung wurde erfolgreich angelegt. Bestell-ID: %ld\n\n" COLOR_RESET, bestId);
     printf(COLOR_CYANH "Ausgefuehrte SQL-Befehle:\n%s" COLOR_RESET, sqlLog);
+    printf("\n\nWeiter mit beliebiger Taste...");
+    getch();
+}
+
+void RechnungDrucken(void) {
+    long rechnungId = InteractiveTable("bestellungen", 1); 
+    if (rechnungId == -1) return;
+    system("cls");
+    char q[512];
+    snprintf(q, sizeof(q), "SELECT b.best_id, b.datum, CONCAT(k.vorname,\" \", k.nachname) as KundeName, CONCAT(m.vorname,\" \", m.nachname) as MitarbeiterName FROM bestellungen b JOIN kunden k ON b.kunde_id = k.kunde_id JOIN mitarbeiter m ON b.mitarbeiter_id = m.mitarbeiter_id  WHERE best_id=%ld;", rechnungId);
+    //printf(COLOR_GRAY "SQL: %s\n" COLOR_RESET, q);
+    if (mysql_query(conn, q) == 0) {
+        MYSQL_RES *res = mysql_store_result(conn);
+        if (res) {
+            MYSQL_ROW row = mysql_fetch_row(res);
+            if (row) {
+                //existingZahlungId = atol(row[0]);
+                printf(COLOR_CYANH "\n Bestelnummer:" COLOR_RESET " %s\t\t " COLOR_CYANH "Datum:" COLOR_RESET " %s\n " COLOR_CYANH "Mitarbaiter:" COLOR_RESET " %s\t " COLOR_CYANH "Kunde:" COLOR_RESET " %s\n", row[0], row[1], row[3], row[2]);
+                } else {
+                     printf(COLOR_RED "Kein Ergebnis!" COLOR_RESET);
+                }
+                mysql_free_result(res);
+            }
+        } else {
+             printf(COLOR_RED "DB Fehler: %s\n" COLOR_RESET, mysql_error(conn));
+             getch();
+             return;
+    }
+    snprintf(q, sizeof(q), "SELECT ROW_NUMBER() OVER () as Num, a.artikel_nummer as Artikelnummer, a.bezeichnung as Bezeichnung, bp.price as Einzelpreis, bp.menge as Menge, (bp.price * bp.menge) as Summe FROM bestellpositionen bp JOIN artikels a ON bp.artikel_id = a.artikel_id WHERE best_id=%ld;", rechnungId);
+    //printf(COLOR_GRAY "SQL: %s\n" COLOR_RESET, q);
+    if (mysql_query(conn, q) == 0) {
+        MYSQL_RES *res = mysql_store_result(conn);
+        if (!res) {
+            fprintf(stderr, "Fehler beim Lesen des Ergebnisses: %s\n", mysql_error(conn));
+            getch();
+            return;
+        }
+        int num_fields = mysql_num_fields(res);
+        MYSQL_FIELD *fields = mysql_fetch_fields(res);
+        unsigned int col_widths[num_fields];
+
+        for (int i = 0; i < num_fields; i++) {
+            unsigned int header_len = utf8_strlen(fields[i].name);
+            unsigned int data_len   = fields[i].max_length;
+            col_widths[i] = (header_len > data_len ? header_len : data_len) + 2;
+        }
+
+        // Tabellenkopf
+        printf("┌");
+        for (int i = 0; i < num_fields; i++) {
+            for (int j = 0; j <= (int)col_widths[i]; ++j) printf("─");
+            if (i == num_fields - 1) printf("┐");
+            else printf("┬");
+        }
+        printf("\n");
+
+        printf("│ ");
+        for (int i = 0; i < num_fields; i++) {
+            printf("%-*s", (int)col_widths[i], fields[i].name);
+            printf("│ ");
+        }
+        printf("\n");
+
+        printf("├");
+        for (int i = 0; i < num_fields; i++) {
+            for (int j = 0; j <= (int)col_widths[i]; ++j) printf("─");
+            if (i == num_fields - 1) printf("┤");
+            else printf("┼");
+        }
+        printf("\n");
+
+        MYSQL_ROW row;
+        while ((row = mysql_fetch_row(res))) {
+            printf("│ ");
+            for (int i = 0; i < num_fields; i++) {
+                print_utf8_padded(row[i], col_widths[i]);
+                printf("│ ");
+            }
+            printf("\n");
+        }
+
+        printf("└");
+        for (int i = 0; i < num_fields; i++) {
+            for (int j = 0; j <= (int)col_widths[i]; ++j) printf("─");
+            if (i == num_fields - 1) printf("┘");
+            else printf("┴");
+        }
+        printf("\n");
+    }
+    snprintf(q, sizeof(q), "SELECT SUM(bp.price * bp.menge) as Summe FROM bestellpositionen bp WHERE best_id=%ld;", rechnungId);
+    if (mysql_query(conn, q) == 0) {
+        MYSQL_RES *res = mysql_store_result(conn);
+        if (!res) {
+            fprintf(stderr, "Fehler beim Lesen des Ergebnisses: %s\n", mysql_error(conn));
+            getch();
+            return;
+        }
+        MYSQL_ROW row = mysql_fetch_row(res);
+        if (row) {
+            //existingZahlungId = atol(row[0]);
+            printf(COLOR_CYANH " Gesamtsumme:" COLOR_RESET " %s €\n", row[0]);
+            } else {
+                    printf(COLOR_RED "Kein Ergebnis!" COLOR_RESET);
+            }
+            mysql_free_result(res);
+        }
     printf("\n\nWeiter mit beliebiger Taste...");
     getch();
 }
@@ -1862,6 +1968,8 @@ int main(int argc, char *argv[])
                 AddMenuItem(curr->key, cb_Payment, NULL);
             } else if (strcmp(curr->value, "Verkaufen") == 0) {
                 AddMenuItem(curr->key, cb_Verkaufen, NULL);
+            } else if (strcmp(curr->value, "RechnungDrucken") == 0) {
+                AddMenuItem(curr->key, cb_RechnungDrucken, NULL);
             }
         }
         curr = curr->next;
