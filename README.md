@@ -1,6 +1,8 @@
 # mysql-uni
 Umschulung Projekt in C zur universellen Arbeit mit MySQL Database
 
+![Screenshots](./screenshots/screens.gif)
+
 ## 1. Architektur-Überblick
 
 Diese Anwendung ist ein Konsolen-Client für MySQL-Datenbanken, geschrieben in C. Die
@@ -13,8 +15,7 @@ und die Windows Console API für die Darstellung (Farben, Cursor-Positionierung)
 
 ## 2. Initialisierung & Konfiguration (.conf)
 
-Der Einstiegspunkt ist die Funktion main in mysql-uni.c. Das Programm akzeptiert ein
-Kommandozeilenargument **-conf:DATEINAME** (Standard ist **db.conf**).
+Der Einstiegspunkt ist die Funktion main in mysql-uni.c. Das Programm akzeptiert ein Kommandozeilenargument **-conf:DATEINAME** (Standard ist **db.conf**).
 
 **Konfiguration parsen (*ParseConfigFile*)**
 
@@ -77,6 +78,7 @@ Die Funktion *DrawReport* dient der Anzeige von Ergebnissen beliebiger SQL-Abfra
 Besonderheiten:
 
 **Dynamisches Layout:** Die Spaltenbreiten werden automatisch berechnet. Basis sind die Metadaten (*mysql_fetch_fields*) und die tatsächliche Länge der Daten (*utf8_strlen*), damit die Tabelle auch bei Umlauten sauber ausgerichtet bleibt.
+
 **Read-Only**: Im Gegensatz zu *InteractiveTable* gibt es hier keinen Auswahl-Cursor und keine Bearbeitungsfunktionen.
 
 ## 5. Eigene Funktionen (FUNC) und Plugins
