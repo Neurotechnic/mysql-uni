@@ -1,0 +1,42 @@
+name: Build on Windows with MSYS2 (MariaDB)
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    defaults:
+      run:
+        shell: msys2 {0}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up MSYS2
+        uses: msys2/setup-msys2@v2
+        with:
+          update: true
+          msystem: UCRT64
+          install: >-
+            base-devel
+            mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-mariadb-connector-c
+
+      - name: Show gcc version
+        run: gcc --version
+
+      - name: Build mysql-uni.exe
+        run: |
+          gcc mysql-uni.c -o mysql-uni.exe \
+            -IC:/msys64/ucrt64/include/mysql \
+            -LC:/msys64/ucrt64/lib \
+            -lmariadb
+
+      - name: List build artifacts
+        run: ls -l
