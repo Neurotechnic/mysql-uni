@@ -410,7 +410,7 @@ void AddConfigNode(const char *type, const char *key, const char *val) {
 
 void DrawMainMenu(int selected) {
     system("cls");
-    printf(COLOR_CYAN "Hauptmenü\n\n" COLOR_RESET);
+    printf(COLOR_CYAN "Hauptmenü. Benutzername: " COLOR_GREEN "%s\n\n" COLOR_RESET, user);
     
     for (int i = 0; i < g_menuCount; i++) {
         if (i == selected) {
@@ -1908,6 +1908,70 @@ int ParseConfigFile(const char *filename) {
     return 1; // OK
 }
 
+int ConnectToDatabase(int forceInteractiveLogin) {
+    // Wenn schon eine Verbindung existiert -> schließen
+    if (conn) {
+        mysql_close(conn);
+        conn = NULL;
+    }
+
+    conn = mysql_init(NULL);
+    if (!conn) {
+        fprintf(stderr, "mysql_init() fehlgeschlagen\n");
+        return 0;
+    }
+
+    // Interaktiver Login, wenn:
+    //  - USER in der Konfiguration leer ist
+    //  - oder forceInteractiveLogin != 0
+    int interactiveLogin = forceInteractiveLogin || (user[0] == '\0');
+
+    if (interactiveLogin) {
+        printf(COLOR_GRAY "Login-Daten werden benoetigt.\n(ESC zum Abbrechen)\n\n" COLOR_RESET);
+
+        while (1) {
+            printf("Benutzername: ");
+            if (!eingabeText(user, sizeof(user), NULL)) {
+                printf("\nAbbruch.\n");
+                mysql_close(conn);
+                conn = NULL;
+                return 0;
+            }
+            printf("\nPasswort: ");
+            if (!eingabeTextMasked(password, sizeof(password), NULL)) {
+                printf("\nAbbruch.\n");
+                mysql_close(conn);
+                conn = NULL;
+                return 0;
+            }
+            printf("\n");
+
+            if (mysql_real_connect(conn, server, user, password, database, 3306, NULL, 0)) {
+                break; // erfolgreich verbunden
+            }
+
+            fprintf(stderr, "Verbindung fehlgeschlagen: %s\n", mysql_error(conn));
+            printf(COLOR_RED "Login fehlgeschlagen. Bitte erneut versuchen (oder mit Strg+C beenden).\n" COLOR_RESET);
+        }
+    } else {
+        // Zugangsdaten aus Konfiguration benutzen
+        if (!mysql_real_connect(conn, server, user, password, database, 3306, NULL, 0)) {
+            fprintf(stderr, "Verbindung fehlgeschlagen: %s\n", mysql_error(conn));
+            mysql_close(conn);
+            conn = NULL;
+            return 0;
+        }
+    }
+
+    // Zeichensatz auf UTF-8 setzen
+    if (mysql_set_character_set(conn, "utf8")) {
+        fprintf(stderr, "Fehler beim Setzen des Zeichensatzes utf8: %s\n",
+                mysql_error(conn));
+    }
+
+    return 1;
+}
+
 int main(int argc, char *argv[])
 {
     SetConsoleOutputCP(CP_UTF8);
@@ -1927,20 +1991,8 @@ int main(int argc, char *argv[])
         return 1;
     }
 
-    conn = mysql_init(NULL);
-    if (!conn) {
-        fprintf(stderr, "mysql_init() fehlgeschlagen\n");
+    if (!ConnectToDatabase(0)) {
         return 1;
-    }
-
-    if (!mysql_real_connect(conn, server, user, password, database, 3306, NULL, 0)) {
-        fprintf(stderr, "Verbindung fehlgeschlagen: %s\n", mysql_error(conn));
-        mysql_close(conn);
-        return 1;
-    }
-
-    if (mysql_set_character_set(conn, "utf8")) {
-        fprintf(stderr, "Fehler beim Setzen des Zeichensatzes utf8: %s\n", mysql_error(conn));
     }
 
     //
@@ -1989,7 +2041,9 @@ int main(int argc, char *argv[])
                 g_menuItems[curMenuItem].callback(g_menuItems[curMenuItem].context);
             }
             DrawMainMenu(curMenuItem);
-            
+        } else if (ch == 12) {    //Ctrl-L
+              if (!ConnectToDatabase(1)) break;
+              DrawMainMenu(curMenuItem=0);
         } else if (ch == 0 || ch == 224) {
             ch = getch();
             if (ch == 72) { 

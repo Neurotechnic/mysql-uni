@@ -14,7 +14,7 @@ und die Windows Console API für die Darstellung (Farben, Cursor-Positionierung)
 ## 2. Initialisierung & Konfiguration (.conf)
 
 Der Einstiegspunkt ist die Funktion main in mysql-uni.c. Das Programm akzeptiert ein
-Kommandozeilenargument -conf:DATEINAME (Standard ist db.conf).
+Kommandozeilenargument **-conf:DATEINAME** (Standard ist **db.conf**).
 
 **Konfiguration parsen (*ParseConfigFile*)**
 
@@ -114,5 +114,5 @@ Es ist ein Refactoring hin zu einem echten Plugin-System geplant:
 ## 6. Hilfsmodule
 
 *myfunc.h*: Enthält Low-Level-Funktionen für die Konsole.
-	*eingabeText* / *eingabeJahrMonat*: Sichere Eingabefunktionen mit ESC-Support (Abbruch).
-	*utf8_strlen*: Korrekte Berechnung der String-Länge für die Tabellenausrichtung (essenziell für korrekte Darstellung von Umlauten).
+- *eingabeText* / *eingabeJahrMonat*: Sichere Eingabefunktionen mit ESC-Support (Abbruch).
+- *utf8_strlen*: Korrekte Berechnung der String-Länge für die Tabellenausrichtung (essenziell für korrekte Darstellung von Umlauten).

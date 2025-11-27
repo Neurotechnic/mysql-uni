@@ -156,6 +156,48 @@ static inline int eingabeText(char *buffer, int maxLen, const char *defaultValue
     }
 }
 
+// return: 1 = OK, 0 = Abbruch (ESC)
+static inline int eingabeTextMasked(char *buffer, int maxLen, const char *defaultValue) {
+    int i = 0;
+    char ch;
+    buffer[0] = '\0';
+
+    while (1) {
+        ch = getch();
+
+        if (ch == 27) { // ESC
+            return 0;
+        }
+        else if (ch == 13) { // ENTER
+            if (i == 0 && defaultValue) {
+                // Default übernehmen (falls mal gebraucht)
+                strncpy(buffer, defaultValue, maxLen - 1);
+                buffer[maxLen - 1] = '\0';
+
+                // Statt Klartext: Sterne ausgeben
+                int len = (int)strlen(buffer);
+                for (int k = 0; k < len; ++k) putchar('*');
+            }
+            buffer[i] = '\0'; // Terminieren (wie bei eingabeText)
+            return 1;
+        }
+        else if (ch == 8) { // Backspace
+            if (i > 0) {
+                i--;
+                printf("\b \b");
+            }
+        }
+        else if (ch >= 32 && ch <= 126) { // Printable
+            if (i < maxLen - 1) {
+                buffer[i] = ch;
+                i++;
+                putchar('*');
+            }
+        }
+    }
+}
+
+
 // Monatseingabe mit strikter Maske (JJJJ-MM) und Default-Wert
 // return: 1 = OK, 0 = Abbruch (ESC)
 static inline int eingabeJahrMonat(char *buffer, const char *defaultValue) {
